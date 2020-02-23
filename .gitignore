@@ -1,0 +1,7 @@
+
+build/*
+.DS_Store
+grainlet~.xcodeproj/project.xcworkspace/xcuserdata/simondemeule.xcuserdatad/UserInterfaceState.xcuserstate
+grainlet~.xcodeproj/xcuserdata/simondemeule.xcuserdatad/xcdebugger/Breakpoints_v2.xcbkptlist
+grainlet~.xcodeproj/project.xcworkspace/contents.xcworkspacedata
+grainlet~.xcodeproj/project.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
