@@ -28,6 +28,8 @@
 #include <sys/stat.h>
 #include <OpenCL/opencl.h>
 
+#include <sys/time.h>
+
 // struct to represent the object's state
 typedef struct _graf {
     t_pxobject ob;            // the object itself (t_pxobject in MSP instead of t_object)
@@ -42,7 +44,7 @@ typedef struct _graf {
     int cl_device_idx;
     cl_device_id cl_device_id;             // compute device id
     cl_context cl_context;                 // compute context
-    cl_command_queue cl_commands;          // compute command queue
+    cl_command_queue cl_queue;          // compute command queue
     cl_program cl_program;                 // compute program
     cl_kernel cl_kernel;                   // compute kernel
 } t_graf;
@@ -116,7 +118,7 @@ void graf_cl_init(t_graf *x) {
             return;
         }
         
-        post(" %s\n", device_name);
+        post("- %s\n", device_name);
     }
     
     // hardcoded device selection
@@ -125,7 +127,7 @@ void graf_cl_init(t_graf *x) {
 #define D_UHD630 (1)
 #define D_I9 (0)
     
-    x->cl_device_id = device_ids[D_I9];
+    x->cl_device_id = device_ids[D_VEGA20];
     
     // Vega only has an edge when dimensionality goes above ~2^11
     
@@ -140,7 +142,7 @@ void graf_cl_init(t_graf *x) {
         return;
     }
     
-    post("Device chosen for computation:\n %s\n", device_name);
+    post("Device chosen for computation:\n- %s\n", device_name);
     
     // Create a compute context
     //
@@ -153,12 +155,12 @@ void graf_cl_init(t_graf *x) {
         return;
     }
     
-    // Create a command commands
+    // Create a command queue
     //
-    x->cl_commands = clCreateCommandQueue(x->cl_context, x->cl_device_id, 0, &(x->cl_err));
-    if (!x->cl_commands)
+    x->cl_queue = clCreateCommandQueue(x->cl_context, x->cl_device_id, 0, &(x->cl_err));
+    if (!x->cl_queue)
     {
-        post("Error: Failed to create a command commands!\n");
+        post("Error: Failed to create a command queue!\n");
         x->cl_init_failed = true;
         return;
     }
@@ -294,6 +296,10 @@ void graf_perform64(t_graf *x, t_object *dsp64, double **ins, long numins, doubl
     }
     if(!x->cl_init_failed)
     {
+        struct timeval  tv1, tv2;
+        gettimeofday(&tv1, NULL);
+
+        
         cl_mem cl_mem_input = clCreateBuffer(x->cl_context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, sizeof(double) * sampleframes, in, &(x->cl_err));
         if (x->cl_err != CL_SUCCESS)
         {
@@ -320,7 +326,7 @@ void graf_perform64(t_graf *x, t_object *dsp64, double **ins, long numins, doubl
         // using the maximum number of work group items for this device
         //
         x->cl_global = sampleframes;
-        x->cl_err = clEnqueueNDRangeKernel(x->cl_commands, x->cl_kernel, 1, NULL, &(x->cl_global), &(x->cl_local), 0, NULL, NULL);
+        x->cl_err = clEnqueueNDRangeKernel(x->cl_queue, x->cl_kernel, 1, NULL, &(x->cl_global), &(x->cl_local), 0, NULL, NULL);
         if (x->cl_err)
         {
             post("Error: Failed to execute kernel!\n");
@@ -328,9 +334,15 @@ void graf_perform64(t_graf *x, t_object *dsp64, double **ins, long numins, doubl
         
         // Wait for the command commands to get serviced before reading back results
         //
-        clFinish(x->cl_commands);
+        clFinish(x->cl_queue);
         
         clReleaseMemObject(cl_mem_input);
         clReleaseMemObject(cl_mem_output);
+        
+        gettimeofday(&tv2, NULL);
+        
+        post("Execution time: %f seconds\n",
+             (double) (tv2.tv_usec - tv1.tv_usec) / 1000000 +
+             (double) (tv2.tv_sec - tv1.tv_sec));
     }
 }
