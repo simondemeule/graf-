@@ -33,7 +33,10 @@ typedef struct _graf {
     t_pxobject ob;            // the object itself (t_pxobject in MSP instead of t_object)
     double samplerate;
     long sampleframes;
+    t_double *in;
+    t_double *out;
     
+    bool cl_pending = false;
     bool cl_init_attempted = false;
     bool cl_init_failed = false;
     size_t cl_global;                      // global domain size for our calculation
@@ -45,6 +48,8 @@ typedef struct _graf {
     cl_command_queue cl_commands;          // compute command queue
     cl_program cl_program;                 // compute program
     cl_kernel cl_kernel;                   // compute kernel
+    cl_mem cl_mem_input;
+    cl_mem cl_mem_output;
 } t_graf;
 
 // method prototypes
@@ -125,7 +130,7 @@ void graf_cl_init(t_graf *x) {
 #define D_UHD630 (1)
 #define D_I9 (0)
     
-    x->cl_device_id = device_ids[D_I9];
+    x->cl_device_id = device_ids[D_UHD630];
     
     // Vega only has an edge when dimensionality goes above ~2^11
     
@@ -208,11 +213,44 @@ void graf_cl_init(t_graf *x) {
         return;
     }
     
+    x->cl_mem_input = clCreateBuffer(x->cl_context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, sizeof(double) * x->sampleframes, x->in, &(x->cl_err));
+    if (x->cl_err != CL_SUCCESS)
+    {
+        post("Error: Failed to attach input memory! %d\n", x->cl_err);
+        x->cl_init_failed = true;
+        return;
+    }
+    x->cl_mem_output = clCreateBuffer(x->cl_context, CL_MEM_WRITE_ONLY | CL_MEM_USE_HOST_PTR, sizeof(double) * x->sampleframes, x->out, &(x->cl_err));
+    if (x->cl_err != CL_SUCCESS)
+    {
+        post("Error: Failed to attach output memory! %d\n", x->cl_err);
+        x->cl_init_failed = true;
+        return;
+    }
+    
+    // Set the arguments to our compute kernel
+    //
+    x->cl_err  = 0;
+    x->cl_err  = clSetKernelArg(x->cl_kernel, 0, sizeof(cl_mem), &(x->cl_mem_input));
+    x->cl_err |= clSetKernelArg(x->cl_kernel, 1, sizeof(cl_mem), &(x->cl_mem_output));
+    x->cl_err |= clSetKernelArg(x->cl_kernel, 2, sizeof(long), &(x->sampleframes));
+    if (x->cl_err != CL_SUCCESS)
+    {
+        post("Error: Failed to set kernel arguments! %d\n", x->cl_err);
+        x->cl_init_failed = true;
+        return;
+    }
+    
     x->cl_init_failed = false;
 }
 
 void graf_cl_reset(t_graf *x) {
-    
+    clReleaseMemObject(x->cl_mem_input);
+    clReleaseMemObject(x->cl_mem_output);
+    clReleaseProgram(x->cl_program);
+    clReleaseKernel(x->cl_kernel);
+    clReleaseCommandQueue(x->cl_commands);
+    clReleaseContext(x->cl_context);
 }
 
 void *graf_new(t_symbol *s, long argc, t_atom *argv)
@@ -220,7 +258,7 @@ void *graf_new(t_symbol *s, long argc, t_atom *argv)
     t_graf *x = (t_graf *)object_alloc(graf_class);
     
     if (x) {
-        dsp_setup((t_pxobject *)x, 2);
+        dsp_setup((t_pxobject *)x, 1);
         outlet_new(x, "signal");
         // disable in-place optimisation so that the input and output buffers are distinct
         x->ob.z_misc |= Z_NO_INPLACE;
@@ -283,43 +321,25 @@ void graf_assist(t_graf *x, void *b, long m, long a, char *s)
 // this is the 64-bit perform method audio vectors
 void graf_perform64(t_graf *x, t_object *dsp64, double **ins, long numins, double **outs, long numouts, long sampleframes, long flags, void *userparam)
 {
-    t_double *in = ins[0];
-    t_double *out = outs[0];
-    
     // possible edge case: change of sampleframes? is the graph rebuilt then?
     
     if(!x->cl_init_attempted) {
+        x->in = ins[0];
+        x->out = outs[0];
+        x->sampleframes = sampleframes;
         graf_cl_init(x);
         x->cl_init_attempted = true;
     }
     if(!x->cl_init_failed)
     {
-        cl_mem cl_mem_input = clCreateBuffer(x->cl_context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, sizeof(double) * sampleframes, in, &(x->cl_err));
-        if (x->cl_err != CL_SUCCESS)
-        {
-            post("Error: Failed to attach input memory! %d\n", x->cl_err);
-        }
-        cl_mem cl_mem_output = clCreateBuffer(x->cl_context, CL_MEM_WRITE_ONLY | CL_MEM_USE_HOST_PTR, sizeof(double) * sampleframes, out, &(x->cl_err));
-        if (x->cl_err != CL_SUCCESS)
-        {
-            post("Error: Failed to attach output memory! %d\n", x->cl_err);
-        }
-        
-        // Set the arguments to our compute kernel
-        //
-        x->cl_err  = 0;
-        x->cl_err  = clSetKernelArg(x->cl_kernel, 0, sizeof(cl_mem), &cl_mem_input);
-        x->cl_err |= clSetKernelArg(x->cl_kernel, 1, sizeof(cl_mem), &cl_mem_output);
-        x->cl_err |= clSetKernelArg(x->cl_kernel, 2, sizeof(long), &sampleframes);
-        if (x->cl_err != CL_SUCCESS)
-        {
-            post("Error: Failed to set kernel arguments! %d\n", x->cl_err);
-        }
-        
         // Execute the kernel over the entire range of our 1d input data set
         // using the maximum number of work group items for this device
         //
         x->cl_global = sampleframes;
+        if(x->cl_pending) {
+            post("Can't keep up! Last command is still incomplete!");
+        }
+        x->cl_pending = true;
         x->cl_err = clEnqueueNDRangeKernel(x->cl_commands, x->cl_kernel, 1, NULL, &(x->cl_global), &(x->cl_local), 0, NULL, NULL);
         if (x->cl_err)
         {
@@ -329,8 +349,6 @@ void graf_perform64(t_graf *x, t_object *dsp64, double **ins, long numins, doubl
         // Wait for the command commands to get serviced before reading back results
         //
         clFinish(x->cl_commands);
-        
-        clReleaseMemObject(cl_mem_input);
-        clReleaseMemObject(cl_mem_output);
+        x->cl_pending = false;
     }
 }
