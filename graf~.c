@@ -127,7 +127,7 @@ void graf_cl_init(t_graf *x) {
 #define D_UHD630 (1)
 #define D_I9 (0)
     
-    x->cl_device_id = device_ids[D_VEGA20];
+    x->cl_device_id = device_ids[D_I9];
     
     // Vega only has an edge when dimensionality goes above ~2^11
     
@@ -214,7 +214,10 @@ void graf_cl_init(t_graf *x) {
 }
 
 void graf_cl_reset(t_graf *x) {
-    
+    clReleaseProgram(x->cl_program);
+    clReleaseKernel(x->cl_kernel);
+    clReleaseCommandQueue(x->cl_queue);
+    clReleaseContext(x->cl_context);
 }
 
 void *graf_new(t_symbol *s, long argc, t_atom *argv)
@@ -240,15 +243,6 @@ void graf_free(t_graf *x)
 void graf_dsp64(t_graf *x, t_object *dsp64, short *count, double samplerate, long maxvectorsize, long flags)
 {
     post("my sample rate is: %f", samplerate);
-    
-    // instead of calling dsp_add(), we send the "dsp_add64" message to the object representing the dsp chain
-    // the arguments passed are:
-    // 1: the dsp64 object passed-in by the calling function
-    // 2: the symbol of the "dsp_add64" message we are sending
-    // 3: a pointer to your object
-    // 4: a pointer to your 64-bit perform method
-    // 5: flags to alter how the signal chain handles your object -- just pass 0
-    // 6: a generic pointer that you can use to pass any additional data to your perform method
     
     x->samplerate = samplerate;
     object_method(dsp64, gensym("dsp_add64"), x, graf_perform64, 0, NULL);
