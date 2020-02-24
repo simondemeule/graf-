@@ -299,13 +299,12 @@ void graf_perform64(t_graf *x, t_object *dsp64, double **ins, long numins, doubl
         struct timeval  tv1, tv2;
         gettimeofday(&tv1, NULL);
 
-        
         cl_mem cl_mem_input = clCreateBuffer(x->cl_context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, sizeof(double) * sampleframes, in, &(x->cl_err));
         if (x->cl_err != CL_SUCCESS)
         {
             post("Error: Failed to attach input memory! %d\n", x->cl_err);
         }
-        cl_mem cl_mem_output = clCreateBuffer(x->cl_context, CL_MEM_WRITE_ONLY | CL_MEM_USE_HOST_PTR, sizeof(double) * sampleframes, out, &(x->cl_err));
+        cl_mem cl_mem_output = clCreateBuffer(x->cl_context, CL_MEM_WRITE_ONLY, sizeof(double) * sampleframes, NULL, &(x->cl_err));
         if (x->cl_err != CL_SUCCESS)
         {
             post("Error: Failed to attach output memory! %d\n", x->cl_err);
@@ -335,6 +334,14 @@ void graf_perform64(t_graf *x, t_object *dsp64, double **ins, long numins, doubl
         // Wait for the command commands to get serviced before reading back results
         //
         clFinish(x->cl_queue);
+        
+        // Read back the results from the device to verify the output
+        //
+        x->cl_err = clEnqueueReadBuffer(x->cl_queue, cl_mem_output, CL_TRUE, 0, sizeof(double) * sampleframes, out, 0, NULL, NULL );
+        if (x->cl_err != CL_SUCCESS)
+        {
+            post("Error: Failed to read output array! %d\n", x->cl_err);
+        }
         
         clReleaseMemObject(cl_mem_input);
         clReleaseMemObject(cl_mem_output);
