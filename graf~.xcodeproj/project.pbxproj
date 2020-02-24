@@ -7,13 +7,15 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		3B2A369A2308EA54008D21AD /* graf~.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3B2A36992308EA54008D21AD /* graf~.cpp */; };
+		3B01FF0424030338006F8FD1 /* OpenCL.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3B01FF0324030338006F8FD1 /* OpenCL.framework */; };
+		3B2A369A2308EA54008D21AD /* graf~.c in Sources */ = {isa = PBXBuildFile; fileRef = 3B2A36992308EA54008D21AD /* graf~.c */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		22CF10220EE984600054F513 /* maxmspsdk.xcconfig */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.xcconfig; name = maxmspsdk.xcconfig; path = ../../maxmspsdk.xcconfig; sourceTree = SOURCE_ROOT; };
 		2FBBEAE508F335360078DB84 /* graf~.mxo */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "graf~.mxo"; sourceTree = BUILT_PRODUCTS_DIR; };
-		3B2A36992308EA54008D21AD /* graf~.cpp */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.objcpp; fileEncoding = 4; path = "graf~.cpp"; sourceTree = "<group>"; };
+		3B01FF0324030338006F8FD1 /* OpenCL.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = OpenCL.framework; path = System/Library/Frameworks/OpenCL.framework; sourceTree = SDKROOT; };
+		3B2A36992308EA54008D21AD /* graf~.c */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.objcpp; fileEncoding = 4; path = "graf~.c"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -21,6 +23,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3B01FF0424030338006F8FD1 /* OpenCL.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -31,8 +34,9 @@
 			isa = PBXGroup;
 			children = (
 				22CF10220EE984600054F513 /* maxmspsdk.xcconfig */,
-				3B2A36992308EA54008D21AD /* graf~.cpp */,
+				3B2A36992308EA54008D21AD /* graf~.c */,
 				19C28FB4FE9D528D11CA2CBB /* Products */,
+				3B01FF0224030338006F8FD1 /* Frameworks */,
 			);
 			name = iterator;
 			sourceTree = "<group>";
@@ -43,6 +47,14 @@
 				2FBBEAE508F335360078DB84 /* graf~.mxo */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		3B01FF0224030338006F8FD1 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				3B01FF0324030338006F8FD1 /* OpenCL.framework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -129,7 +141,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				3B2A369A2308EA54008D21AD /* graf~.cpp in Sources */,
+				3B2A369A2308EA54008D21AD /* graf~.c in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
