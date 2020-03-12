@@ -79,17 +79,100 @@ void ext_main(void *r)
     graf_class = c;
 }
 
+// THE FFT HAS 2 CHANNELS. WHAT DO WE DO WITH THAT???? :(:(:(:(:(:(:(
+
+// buffer(bin, time) is a data structure containing previous output values + the current input value
+// bin  spans (0, bin_size - 1)
+// time spans (0, time_size - 1)
+//
+// buffer(0, 0)              • • •  buffer(bin_size - 1, 0)
+//   •                                •
+//   •                                •
+//   •                                •
+// buffer(0, time_size - 1)  • • •  buffer(bin_size - 1, time_size - 1)
+//
+// structure works with rolling buffer over time
+// buffer time_offset is given by time_offset
+// current input frame exists at buffer(0, time_offset) • • • buffer(bin_size, time_offset)
+// previous input frame exists at buffer(0, warp(time_offset - 1, time_size)) • • • buffer(N, warp(time_offset - 1, time_size))
+// where warp(i, time_size) is non-negative modulo M
+//
+// this 2D array is flattened with
+// buffer_flat(index) = buffer(warp(index, bin_size), index / bin_size)
+//
+// conversely we have
+// buffer(bin, time) = buffer_flat(bin + time * bin_size)
+//
+// which gives us the map
+//
+// buffer_flat(0)  • • •  buffer_flat(bin_size - 1), buffer_flat(bin_size)  • • •  buffer_flat(bin_size * time_size - 1)
+//
+// buffer(0, 0)    • • •  buffer(bin_size - 1, 0),   buffer(0, 1)           • • •  buffer(bin_size - 1, time_size - 1)
+//
+// the linear system is defined as
+//
+// output(bin_output) = sum(bin_input from 0 to bin_size - 1,
+//                      sum(time from 0 to time_size - 1,
+//                      buffer(bin_input, warp(time_offset - time, time_size)) * coefficient(bin_input, time, bin_output)))
+//
+// once output(bin_output) is computed for all bin_output, time_offset is set to warp(time_offset + 1, time_size), and buffer(x, warp(T - 1)) is set to o(x) for all x
+//
+// coefficient(bin_input, time, bin_output) is a data structure containing the system coefficients
+// bin_input  spans (0, bin_size - 1)
+// time       spans (0, time_size - 1)
+// bin_output spans (0, bin_size - 1)
+//
+//        coefficient(0, 0, bin_size - 1)   • • •  coefficient(bin_size - 1, 0, bin_size - 1)
+//         •                                        •
+//       •                                        •
+// coefficient(0, 0, 0)              • • •  coefficient(bin_size - 1, 0, 0)
+//    •                                        •
+//    •                                        •
+//    •                                        •
+// coefficient(0, time_size - 1, 0)  • • •  coefficient(bin_size - 1, time_size - 1, 0)
+//
+// this 3D array is flattened with
+// coefficient_flat(index) = coefficient(warp(index, bin_size), warp(index / bin_size, time_size), index / (bin_size * time_size))
+//
+// conversely we have
+// coefficient(bin_input, time, bin_output) = coefficient_flat(bin_input + time * bin_size + bin_output * bin_size * time_size)
+//
+// which gives us the map
+//
+// coefficient_flat(0)   • • •  coefficient_flat(bin_size - 1),  coefficient_flat(bin_size)  • • •  coefficient_flat(bin_size * time_size - 1),  coefficient_flat(bin_size * time_size)  • • •  coefficient_flat(bin_size * time_size * bin_size - 1)
+//
+// coefficient(0, 0, 0)  • • •  coefficient(bin_size - 1, 0, 0), coefficient(0, 1, 0)        • • •  coefficient(bin_size - 1, time_size - 1, 0), coefficient(0, 0, 1)                    • • •  coefficient(bin_size - 1, time_size - 1, bin_size - 1)
+//
+// kernels can only use single-dimensional arrays, so they are always implicitly the flattened versions of the array
+
+
 const char *kernel_source = "\n" \
-"__kernel void graf(                                                    \n" \
-"   __global double* input,                                             \n" \
-"   __global double* output,                                            \n" \
-"   const long count)                                                   \n" \
-"{                                                                      \n" \
-"   int i = get_global_id(0);                                           \n" \
-"   if(i < count) {                                                     \n" \
-"       output[i] = input[i];                                           \n" \
-"   }                                                                   \n" \
-"}                                                                      \n" \
+"int warp(int index, int size) {                                                        \n" \
+"   int temp = index % size;                                                            \n" \
+"   return temp < 0 ? temp + size : temp;                                               \n" \
+"}                                                                                      \n" \
+"__kernel void system(                                                                  \n" \
+"   __global double* buffer,                                                            \n" \
+"   __global double* coefficients,                                                      \n" \
+"   __global double* output,                                                            \n" \
+"   const long bin_size,                                                                \n" \
+"   const long time_size,                                                               \n" \
+"   const long time_offset)                                                             \n" \
+"{                                                                                      \n" \
+"   int bin_output = get_global_id(0);                                                  \n" \
+"   if(bin_output < bin_size) {                                                         \n" \
+"      double accum = 0;                                                                \n" \
+"      for(int time = 0; time < time_size; time++) {                                    \n" \
+"         int time_rolling = warp(time_offset - time, time_size);                       \n" \
+"         for(int bin_input = 0; bin_input < bin_size; bin_input++) {                   \n" \
+"            int n = bin_input + time_rolling * bin_size;                               \n" \
+"            int m = bin_input + time * bin_size + bin_output * bin_size * time_size;   \n" \
+"            accum += buffer[n] * coefficients[m];                                      \n" \
+"         }                                                                             \n" \
+"      }                                                                                \n" \
+"      output[bin_output] = accum;                                                      \n" \
+"   }                                                                                   \n" \
+"}                                                                                      \n" \
 "\n";
 
 void graf_cl_init(t_graf *x) {
@@ -123,11 +206,11 @@ void graf_cl_init(t_graf *x) {
     
     // hardcoded device selection
     
-#define D_VEGA20 (2)
-#define D_UHD630 (1)
-#define D_I9 (0)
+#define DEVICE_VEGA20 (2)
+#define DEVICE_UHD630 (1)
+#define DEVICE_I9 (0)
     
-    x->cl_device_id = device_ids[D_I9];
+    x->cl_device_id = device_ids[DEVICE_UHD630];
     
     // Vega only has an edge when dimensionality goes above ~2^11
     
@@ -192,7 +275,7 @@ void graf_cl_init(t_graf *x) {
     
     // Create the compute kernel in the program we wish to run
     //
-    x->cl_kernel = clCreateKernel(x->cl_program, "graf", &(x->cl_err));
+    x->cl_kernel = clCreateKernel(x->cl_program, "system", &(x->cl_err));
     if (!x->cl_kernel || x->cl_err != CL_SUCCESS)
     {
         post("Error: Failed to create compute kernel!\n");
@@ -290,9 +373,6 @@ void graf_perform64(t_graf *x, t_object *dsp64, double **ins, long numins, doubl
     }
     if(!x->cl_init_failed)
     {
-        struct timeval  tv1, tv2;
-        gettimeofday(&tv1, NULL);
-
         cl_mem cl_mem_input = clCreateBuffer(x->cl_context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, sizeof(double) * sampleframes, in, &(x->cl_err));
         if (x->cl_err != CL_SUCCESS)
         {
@@ -337,12 +417,15 @@ void graf_perform64(t_graf *x, t_object *dsp64, double **ins, long numins, doubl
             post("Error: Failed to read output array! %d\n", x->cl_err);
         }
         
+        struct timeval  tv1, tv2;
+        gettimeofday(&tv1, NULL);
+        
         clReleaseMemObject(cl_mem_input);
         clReleaseMemObject(cl_mem_output);
         
         gettimeofday(&tv2, NULL);
         
-        post("Execution time: %f seconds\n",
+        post("Memory release time: %f seconds\n",
              (double) (tv2.tv_usec - tv1.tv_usec) / 1000000 +
              (double) (tv2.tv_sec - tv1.tv_sec));
     }
