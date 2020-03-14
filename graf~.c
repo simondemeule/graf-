@@ -109,20 +109,17 @@ const char *kernel_source = "\n" \
 "      for(int bin_input = 0; bin_input < bin_size; bin_input++) {                          \n" \
 "         int i = bin_input + bin_output * bin_size * time_size;                            \n" \
 "         accum += input[bin_input] * coeffs[i];                                            \n" \
+"         for(int time = 0; time < time_size - 1; time++) {                                 \n" \
+"            int time_rolling = warp(time_offset - time, time_size - 1);                    \n" \
+"            int n = bin_input + time_rolling * bin_size;                                   \n" \
+"            int m = bin_input + (time + 1) * bin_size + bin_output * bin_size * time_size; \n" \
+"            accum += past[n] * coeffs[m];                                                  \n" \
+"         }                                                                                 \n" \
 "      }                                                                                    \n" \
 "      output[bin_output] = accum;                                                          \n" \
 "   }                                                                                       \n" \
 "}                                                                                          \n" \
 "\n";
-
-/*
- "         for(int time = 0; time < time_size - 1; time++) {                                 \n" \
- "            int time_rolling = warp(time_offset - time, time_size - 1);                    \n" \
- "            int n = bin_input + time_rolling * bin_size;                                   \n" \
- "            int m = bin_input + (time + 1) * bin_size + bin_output * bin_size * time_size; \n" \
- "            accum += past[n] * coeffs[m];                                                  \n" \
- "         }                                                                                 \n" \
- */
 
 void graf_cl_init(t_graf *x) {
     cl_device_id device_ids[8];
@@ -306,27 +303,15 @@ void graf_init_memory_contents(t_graf *x) {
     double *coeffs;
     coeffs = (double*) malloc(sizeof(double) * x->bin_size * x->bin_size * x->time_size);
     
-    double min = 0.2;
-    double max = -0.2;
-    
-    srand(time(NULL) + getpid());
+    double sigma = 2.0;
+    double gain = 0.50;
     
     for(int bin_input = 0; bin_input < x->bin_size; bin_input++) {
         for(int time = 0; time < x->time_size; time++) {
             for(int bin_output = 0; bin_output < x->bin_size; bin_output++) {
                 int index = bin_input + time * x->bin_size + bin_output * x->bin_size * x->time_size;
-                if(bin_input == bin_output) {
-                    if(time == 0) {
-                        coeffs[index] = 1;
-                    } else {
-                        coeffs[index] = 0;
-                    }
-                } else if(bin_input != 0) {
-                    coeffs[index] = min + (double)rand() / ((double)RAND_MAX / (max - min));
-                } else {
-                    coeffs[index] = 0;
-                }
-                
+                double dist = sqrt(pow(bin_input - bin_output, 2.0) + pow(time, 2.0));
+                coeffs[index] = gain / (sigma * sqrt(2.0 * PI)) * exp(- pow(dist / sigma, 2.0) / 2.0);
             }
         }
     }
