@@ -85,6 +85,10 @@ void ext_main(void *r)
     graf_class = c;
 }
 
+// flattening convention
+// past(bin, time) -> past(bin + time * bin_size)
+// coeffs(bin_input, time, bin_output) -> coeffs(bin_input + time * bin_size + bin_output * bin_size * time_size)
+
 const char *kernel_source = "\n" \
 "int warp(int index, int size) {                                                            \n" \
 "   int temp = index % size;                                                                \n" \
@@ -105,17 +109,20 @@ const char *kernel_source = "\n" \
 "      for(int bin_input = 0; bin_input < bin_size; bin_input++) {                          \n" \
 "         int i = bin_input + bin_output * bin_size * time_size;                            \n" \
 "         accum += input[bin_input] * coeffs[i];                                            \n" \
-"         for(int time = 0; time < time_size - 1; time++) {                                 \n" \
-"            int time_rolling = warp(time_offset - time, time_size - 1);                    \n" \
-"            int n = bin_input + time_rolling * bin_size;                                   \n" \
-"            int m = bin_input + (time + 1) * bin_size + bin_output * bin_size * time_size; \n" \
-"            accum += past[n] * coeffs[m];                                                  \n" \
-"         }                                                                                 \n" \
 "      }                                                                                    \n" \
 "      output[bin_output] = accum;                                                          \n" \
 "   }                                                                                       \n" \
 "}                                                                                          \n" \
 "\n";
+
+/*
+ "         for(int time = 0; time < time_size - 1; time++) {                                 \n" \
+ "            int time_rolling = warp(time_offset - time, time_size - 1);                    \n" \
+ "            int n = bin_input + time_rolling * bin_size;                                   \n" \
+ "            int m = bin_input + (time + 1) * bin_size + bin_output * bin_size * time_size; \n" \
+ "            accum += past[n] * coeffs[m];                                                  \n" \
+ "         }                                                                                 \n" \
+ */
 
 void graf_cl_init(t_graf *x) {
     cl_device_id device_ids[8];
@@ -261,7 +268,7 @@ void graf_cl_init_memory(t_graf *x) {
         post("Error: Failed to allocate past memory! %d\n", x->cl_err);
         return;
     }
-    x->cl_mem_coeffs = clCreateBuffer(x->cl_context, CL_MEM_READ_ONLY, sizeof(double) * x->bin_size * x->time_size, NULL, &(x->cl_err));
+    x->cl_mem_coeffs = clCreateBuffer(x->cl_context, CL_MEM_READ_ONLY, sizeof(double) * x->bin_size * x->bin_size * x->time_size, NULL, &(x->cl_err));
     if (x->cl_err != CL_SUCCESS)
     {
         post("Error: Failed to allocate coefficient memory! %d\n", x->cl_err);
@@ -291,6 +298,71 @@ void graf_cl_reset(t_graf *x) {
     clReleaseKernel(x->cl_kernel);
     clReleaseCommandQueue(x->cl_queue);
     clReleaseContext(x->cl_context);
+}
+
+void graf_init_memory_contents(t_graf *x) {
+    x->cl_init_failed = true;
+    
+    double *coeffs;
+    coeffs = (double*) malloc(sizeof(double) * x->bin_size * x->bin_size * x->time_size);
+    
+    double min = 0.2;
+    double max = -0.2;
+    
+    srand(time(NULL) + getpid());
+    
+    for(int bin_input = 0; bin_input < x->bin_size; bin_input++) {
+        for(int time = 0; time < x->time_size; time++) {
+            for(int bin_output = 0; bin_output < x->bin_size; bin_output++) {
+                int index = bin_input + time * x->bin_size + bin_output * x->bin_size * x->time_size;
+                if(bin_input == bin_output) {
+                    if(time == 0) {
+                        coeffs[index] = 1;
+                    } else {
+                        coeffs[index] = 0;
+                    }
+                } else if(bin_input != 0) {
+                    coeffs[index] = min + (double)rand() / ((double)RAND_MAX / (max - min));
+                } else {
+                    coeffs[index] = 0;
+                }
+                
+            }
+        }
+    }
+    
+    // Write coefficients to compute memory
+    //
+    x->cl_err = clEnqueueWriteBuffer(x->cl_queue, x->cl_mem_coeffs, CL_TRUE, 0, sizeof(double) * x->bin_size * x->bin_size * x->time_size, coeffs, 0, NULL, NULL);
+    
+    free(coeffs);
+    
+    if (x->cl_err != CL_SUCCESS)
+    {
+        post("Error: Failed to write coefficients! %d\n", x->cl_err);
+        return;
+    }
+    
+    double *past;
+    past = (double*) malloc(sizeof(double) * x->bin_size * x->bin_size * x->time_size);
+    
+    for(int bin = 0; bin < x->bin_size; bin++) {
+        for(int time = 0; time < x->time_size - 1; time++) {
+            past[bin + time * x->bin_size] = 0;
+        }
+    }
+    
+    x->cl_err = clEnqueueWriteBuffer(x->cl_queue, x->cl_mem_past, CL_TRUE, 0, sizeof(double) * x->bin_size * (x->time_size - 1), past, 0, NULL, NULL);
+    
+    free(past);
+    
+    if (x->cl_err != CL_SUCCESS)
+    {
+        post("Error: Failed to write past! %d\n", x->cl_err);
+        return;
+    }
+    
+    x->cl_init_failed = false;
 }
 
 void graf_cl_reset_memory(t_graf *x) {
@@ -358,6 +430,11 @@ void graf_assist(t_graf *x, void *b, long m, long a, char *s)
     }
 }
 
+long warp(long index, long size) {
+    long temp = index % size;
+    return temp < 0 ? temp + size : temp;
+}
+
 // this is the 64-bit perform method audio vectors
 void graf_perform64(t_graf *x, t_object *dsp64, double **ins, long ins_size, double **outs, long outs_size, long bin_size, long flags, void *user_param)
 {
@@ -371,6 +448,9 @@ void graf_perform64(t_graf *x, t_object *dsp64, double **ins, long ins_size, dou
         graf_cl_init(x);
         if(!x->cl_init_failed) {
             graf_cl_init_memory(x);
+            if(!x->cl_init_failed) {
+                graf_init_memory_contents(x);
+            }
         }
     }
     if(!x->cl_init_failed && x->bin_size != bin_size) {
@@ -391,10 +471,10 @@ void graf_perform64(t_graf *x, t_object *dsp64, double **ins, long ins_size, dou
         x->cl_err = clEnqueueWriteBuffer(x->cl_queue, x->cl_mem_input, CL_TRUE, 0, sizeof(double) * x->bin_size, in, 0, NULL, NULL);
         if (x->cl_err != CL_SUCCESS)
         {
-            post("Error: Failed to write input array! %d\n", x->cl_err);
+            post("Error: Failed to write input! %d\n", x->cl_err);
         }
         
-        // Set the arguments to our compute kernel
+        // Set the argument to our compute kernel
         //
         x->cl_err |= clSetKernelArg(x->cl_kernel, 6, sizeof(long), &(x->time_offset));
         if (x->cl_err != CL_SUCCESS)
@@ -421,7 +501,18 @@ void graf_perform64(t_graf *x, t_object *dsp64, double **ins, long ins_size, dou
         x->cl_err = clEnqueueReadBuffer(x->cl_queue, x->cl_mem_output, CL_TRUE, 0, sizeof(double) * bin_size, out, 0, NULL, NULL );
         if (x->cl_err != CL_SUCCESS)
         {
-            post("Error: Failed to read output array! %d\n", x->cl_err);
+            post("Error: Failed to read output! %d\n", x->cl_err);
+        }
+        
+        // update time offset
+        x->time_offset = warp(x->time_offset + 1, x->time_size - 1);
+        
+        // Write output buffer to compute memory
+        //
+        x->cl_err = clEnqueueWriteBuffer(x->cl_queue, x->cl_mem_past, CL_TRUE, sizeof(double) * x->bin_size * x->time_offset, sizeof(double) * x->bin_size, out, 0, NULL, NULL);
+        if (x->cl_err != CL_SUCCESS)
+        {
+            post("Error: Failed to write output to past! %d\n", x->cl_err);
         }
         
         gettimeofday(&tv2, NULL);
