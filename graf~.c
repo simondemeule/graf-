@@ -150,13 +150,9 @@ void graf_cl_init(t_graf *x) {
         post("- %s\n", device_name);
     }
     
-    // hardcoded device selection
+    // device selection prefers last device
     
-#define DEVICE_VEGA20 (2)
-#define DEVICE_UHD630 (1)
-#define DEVICE_I9 (0)
-    
-    x->cl_device_id = device_ids[DEVICE_VEGA20];
+    x->cl_device_id = device_ids[device_ids_length - 1];
     
     // Vega only has an edge when dimensionality goes above ~2^11
     
@@ -298,13 +294,16 @@ void graf_cl_reset(t_graf *x) {
 }
 
 void graf_init_memory_contents(t_graf *x) {
+    // this is essentially a dirac delta that's been convolved with a gaussian, meaning this is a filter that smears through time and frequency when applied on a spectrum.
+    // this needs to be rewritten so that the gaussians are sampled logarithmically and then normalized so that precise gain control is possible. right now it really sounds bad :(
+    
     x->cl_init_failed = true;
     
     double *coeffs;
     coeffs = (double*) malloc(sizeof(double) * x->bin_size * x->bin_size * x->time_size);
     
     double sigma = 2.0;
-    double gain = 0.50;
+    double gain = 0.20;
     
     for(int bin_input = 0; bin_input < x->bin_size; bin_input++) {
         for(int time = 0; time < x->time_size; time++) {
@@ -366,7 +365,7 @@ void *graf_new(t_symbol *s, long argc, t_atom *argv)
         outlet_new(x, "signal");
         // disable in-place optimisation so that the input and output buffers are distinct
         x->ob.z_misc |= Z_NO_INPLACE;
-        x->time_size = 4;
+        x->time_size = 8;
         x->time_offset = 0;
     }
     return (x);
@@ -501,8 +500,10 @@ void graf_perform64(t_graf *x, t_object *dsp64, double **ins, long ins_size, dou
         }
         
         gettimeofday(&tv2, NULL);
+        /*
         post("Execution time: %f seconds\n",
              (double) (tv2.tv_usec - tv1.tv_usec) / 1000000 +
              (double) (tv2.tv_sec - tv1.tv_sec));
+        */
     }
 }
