@@ -294,8 +294,12 @@ void graf_cl_reset(t_graf *x) {
 }
 
 void graf_init_memory_contents(t_graf *x) {
-    // this is essentially a dirac delta that's been convolved with a gaussian, meaning this is a filter that smears through time and frequency when applied on a spectrum.
-    // this needs to be rewritten so that the gaussians are sampled logarithmically and then normalized so that precise gain control is possible. right now it really sounds bad :(
+    // this entire thing assumes we are not processing a raw signal buffer, but a FFT buffer (ie graf~ is within a pfft~ patcher).
+    // right now it's a bit dumb, we are only dealing with one set of coefficients. this means we have to convert from cartesian to polar, and process only the amplitude using this.
+    // this should be rewritten so that it actually works on two audio channels, for both sine and cosine components of the transform. this is just a dirty proof of concept :P
+    
+    // this kernel is essentially a dirac delta that's been convolved with a gaussian, meaning this is a filter that smears through time and frequency when applied on a spectrum.
+    // this needs to be rewritten so that the gaussians are sampled logarithmically and then normalized so that precise gain control is possible. right now it really sounds terrible :(
     
     x->cl_init_failed = true;
     
